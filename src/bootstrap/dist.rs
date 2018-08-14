@@ -1929,16 +1929,37 @@ impl Step for LlvmTools {
         drop(fs::remove_dir_all(&image));
 
         // Prepare the image directory
-        let bindir = builder
+        let src_bindir = builder
             .llvm_out(target)
             .join("bin");
-        let dst = image.join("lib/rustlib")
-            .join(target)
-            .join("bin");
-        t!(fs::create_dir_all(&dst));
+        let dst_bindir = image.join("bin");
+        t!(fs::create_dir_all(&dst_bindir));
         for tool in LLVM_TOOLS {
-            let exe = bindir.join(exe(tool, &target));
-            builder.install(&exe, &dst, 0o755);
+            let exe = src_bindir.join(exe(tool, &target));
+            builder.install(&exe, &dst_bindir, 0o755);
+        }
+
+        // Maybe add libLLVM.so to the lib-dir. It will only have been built if
+        // LLVM tools are linked dynamically.
+        {
+            let src_libdir = builder
+                .llvm_out(target)
+                .join("lib");
+            let dst_libdir = image.join("lib");
+            t!(fs::create_dir_all(&dst_libdir));
+
+            // Usually libLLVM.so is a symlink to something like libLLVM-6.0.so.
+            // Since tools link to the latter rather than the former, we have to
+            // follow the symlink to find out what to distribute.
+            let llvm_dylib_path = src_libdir.join("libLLVM.so");
+            if llvm_dylib_path.exists() {
+                let llvm_dylib_path = llvm_dylib_path.canonicalize().unwrap_or_else(|e| {
+                    panic!("dist: Error calling canonicalize path `{}`: {}",
+                           llvm_dylib_path.display(), e);
+                });
+
+                builder.install(&llvm_dylib_path, &dst_libdir, 0o644);
+            }
         }
 
         // Prepare the overlay
